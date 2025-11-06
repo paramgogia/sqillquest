@@ -439,6 +439,50 @@ app.post('/api/admin/badge', async (req, res) => {
   res.json(badge);
 });
 
+app.put('/api/admin/course/:id/lessons', async (req, res) => {
+  try {
+    const courseId = req.params.id;
+    let { lessonIds } = req.body;
+
+    // normalize input: accept single string or array
+    if (!lessonIds) return res.status(400).json({ error: 'lessonIds required (array or single id)' });
+    if (!Array.isArray(lessonIds)) lessonIds = [lessonIds];
+
+    // Validate IDs format quickly (optional): filter out falsy values
+    lessonIds = lessonIds.map(id => id && id.toString()).filter(Boolean);
+    if (lessonIds.length === 0) return res.status(400).json({ error: 'No valid lessonIds provided' });
+
+    // Find the course
+    const course = await Course.findById(courseId);
+    if (!course) return res.status(404).json({ error: 'Course not found' });
+
+    // Validate lesson ids actually exist in Lesson collection
+    const validLessons = await Lesson.find({ _id: { $in: lessonIds } }).select('_id').lean();
+    const validIds = validLessons.map(l => l._id.toString());
+    if (validIds.length === 0) {
+      return res.status(400).json({ error: 'None of the provided lessonIds are valid' });
+    }
+
+    // Merge without duplicates (keep existing order, append new valid ones)
+    const existingIds = (course.lessons || []).map(id => id.toString());
+    const merged = [...existingIds];
+    for (const id of validIds) {
+      if (!existingIds.includes(id)) merged.push(id);
+    }
+
+    course.lessons = merged;
+    await course.save();
+
+    // return updated course with lessons populated (optional)
+    const updatedCourse = await Course.findById(courseId).populate('lessons');
+
+    res.json({ ok: true, course: updatedCourse });
+  } catch (err) {
+    console.error('Error appending lessons to course', err);
+    res.status(500).json({ error: 'server error' });
+  }
+});
+
 // --- Misc: Get user progress for a course ---
 app.get('/api/courses/:id/progress', authenticateToken, async (req, res) => {
   const user = await User.findById(req.userId).populate('progress.course');

@@ -1,11 +1,22 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import axios from "axios";
 
-const listeningData = [
+/**
+ * Listening.tsx
+ * - Uses real lesson IDs from GET /api/courses/:courseId when available
+ * - Calls:
+ *    POST /api/practice/:lessonId/submit  -> { answers }  (returns score, xpEarned, totalXp)
+ *    POST /api/lessons/:lessonId/complete -> { courseId } (awards XP_PER_LESSON)
+ *
+ * Expects JWT at localStorage.skillquest_token
+ */
+
+// fallback sample questions (used when course doesn't provide question data)
+const listeningDataFallback = [
   {
     id: 1,
     title: "Section 1",
@@ -44,223 +55,338 @@ const listeningData = [
   },
 ];
 
+// safe client env resolution
+const API_BASE =
+
+  "http://localhost:4000";
+
+const api = axios.create({
+  baseURL: API_BASE,
+  headers: { "Content-Type": "application/json" },
+});
+
+// shuffle helper
+function shuffle<T>(arr: T[]) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
 const Listening = () => {
-  const { skillName } = useParams();
+  const params = useParams<{ courseId?: string; skillName?: string }>();
+  const courseId = params.courseId || params.skillName || "";
   const navigate = useNavigate();
-  const [userAnswers, setUserAnswers] = useState({});
-  const [feedback, setFeedback] = useState({});
-  const [unlockedSections, setUnlockedSections] = useState([1]);
 
-  const handleBack = () => {
-    navigate(-1);
-  };
+  const [courseTitle, setCourseTitle] = useState<string>("");
+  const [sections, setSections] = useState<
+    {
+      sectionId: number;
+      title: string;
+      duration: string;
+      questions: { id: number | string; question: string; answer?: string }[];
+      lessonId?: string; // real backend lesson id if available
+    }[]
+  >([]);
+  const [userAnswers, setUserAnswers] = useState<Record<string, string>>({});
+  const [feedback, setFeedback] = useState<Record<string, "correct" | "wrong">>({});
+  const [unlockedSections, setUnlockedSections] = useState<number[]>([1]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleChange = (sectionId: number, questionId: number, value: string) => {
-    const key = `${sectionId}-${questionId}`;
-    setUserAnswers({ ...userAnswers, [key]: value });
-  };
+  // set auth header once
+  useEffect(() => {
+    const token = localStorage.getItem("skillquest_token");
+    if (token) api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
+  }, []);
 
-  const handleSubmit = async (sectionId: number) => {
-    const section = listeningData.find((s) => s.id === sectionId);
-    const newFeedback = { ...feedback };
-    const token = localStorage.getItem("token");
-
-    if (!token) {
-      toast.error("Please login first");
-      navigate("/login");
-      return;
-    }
-
-    let correctAnswers = 0;
-
-    section?.questions.forEach((q) => {
-      const key = `${section.id}-${q.id}`;
-      const isCorrect = userAnswers[key]?.trim().toLowerCase() === q.answer.toLowerCase();
-      newFeedback[key] = isCorrect ? "correct" : "wrong";
-      if (isCorrect) correctAnswers++;
-    });
-
-    setFeedback(newFeedback);
-
-    // Save answers to backend
-    try {
-      for (const q of section?.questions || []) {
-        const key = `${section.id}-${q.id}`;
-        await axios.post(
-          `http://localhost:5000/api/lessons/${skillName}/save-answer`,
-          {
-            lessonId: `listening-section-${sectionId}`,
-            questionId: `Q${q.id}`,
-            answer: userAnswers[key] || "",
-            isCorrect: newFeedback[key] === "correct",
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
+  // fetch course -> map lessons to sections
+  useEffect(() => {
+    const load = async () => {
+      if (!courseId) {
+        // fallback to local data
+        setCourseTitle("Listening Practice");
+        const fallback = listeningDataFallback.map((s) => ({
+          sectionId: s.id,
+          title: s.title,
+          duration: s.duration,
+          questions: s.questions.map(q => ({ id: q.id, question: q.question, answer: q.answer })),
+        }));
+        setSections(fallback);
+        return;
       }
-    } catch (error: any) {
-      console.error("Error saving answers:", error);
-    }
-  };
 
-  const handleDone = async (sectionId: number) => {
-    const token = localStorage.getItem("token");
-
-    if (!token) {
-      toast.error("Please login first");
-      navigate("/login");
-      return;
-    }
-
-    // Unlock next section
-    if (sectionId < listeningData.length) {
-      setUnlockedSections((prev) => [...new Set([...prev, sectionId + 1])]);
-    }
-
-    // Mark section as complete in backend
-    try {
-      const section = listeningData.find((s) => s.id === sectionId);
-      const correctAnswers = section?.questions.filter((q) => {
-        const key = `${sectionId}-${q.id}`;
-        return feedback[key] === "correct";
-      }).length || 0;
-
-      const score = Math.round((correctAnswers / (section?.questions.length || 1)) * 100);
-
-      const response = await axios.post(
-        `http://localhost:5000/api/lessons/${skillName}/complete`,
-        {
-          lessonId: `listening-section-${sectionId}`,
-          lessonType: "quiz",
-          score: score,
-          feedback: `Section ${sectionId} completed`,
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
+      try {
+        const token = localStorage.getItem("skillquest_token");
+        if (!token) {
+          toast.error("Please login first");
+          navigate("/login");
+          return;
         }
-      );
 
-      // Update user XP in localStorage
-      const user = JSON.parse(localStorage.getItem("user") || "{}");
-      user.xp = response.data.totalXp;
-      user.level = response.data.level;
-      localStorage.setItem("user", JSON.stringify(user));
+        // GET course details (should populate lessons)
+        const courseRes = await api.get(`/api/courses/${courseId}`);
+        const courseData = courseRes?.data;
+        setCourseTitle(courseData?.title || "Listening Practice");
 
-      toast.success(`+${response.data.xpEarned} XP earned!`);
+        // courseData.lessons expected as array (populated)
+        const lessons: any[] = Array.isArray(courseData?.lessons) ? courseData.lessons : [];
 
-      // If last section, navigate back
-      if (sectionId === listeningData.length) {
-        navigate(`/lessons/${skillName}`);
+        // If your lessons include content/questions on server, use them.
+        // Here we attempt to use lesson content if available, otherwise fall back to static questions.
+        const mapped = [];
+
+        // We assume sections count = listeningDataFallback.length.
+        // Map lesson i -> section i (1-based).
+        const fallback = listeningDataFallback;
+
+        for (let i = 0; i < fallback.length; i++) {
+          const sectionNum = fallback[i].id;
+          const lesson = lessons[i]; // may be undefined
+          let questions = fallback[i].questions.map(q => ({ id: q.id, question: q.question, answer: q.answer }));
+          if (lesson && lesson.content) {
+            // If lesson.content contains JSON questions, try to parse.
+            // Accept either a JSON string of { questions: [...] } or plain text.
+            try {
+              const parsed = typeof lesson.content === "string" ? JSON.parse(lesson.content) : lesson.content;
+              if (parsed && Array.isArray(parsed.questions)) {
+                questions = parsed.questions.map((qq: any, idx: number) => ({
+                  id: qq.id ?? idx + 1,
+                  question: qq.question ?? qq.q ?? `Question ${idx + 1}`,
+                  answer: qq.answer ?? undefined,
+                }));
+              }
+            } catch (e) {
+              // not JSON — keep fallback questions (server might store media URLs only)
+            }
+          }
+
+          // shuffle questions for this section
+          const randomized = shuffle(questions);
+
+          mapped.push({
+            sectionId: sectionNum,
+            title: fallback[i].title,
+            duration: fallback[i].duration,
+            questions: randomized,
+            lessonId: lesson?._id || lesson?.id, // real lesson id if available
+          });
+        }
+
+        setSections(mapped);
+      } catch (err: any) {
+        console.error("Failed to load course or map lessons:", err);
+        toast.error("Could not load course - using fallback questions");
+        // fallback
+        const fallback = listeningDataFallback.map((s) => ({
+          sectionId: s.id,
+          title: s.title,
+          duration: s.duration,
+          questions: shuffle(s.questions.map(q => ({ id: q.id, question: q.question, answer: q.answer }))),
+        }));
+        setSections(fallback);
       }
-    } catch (error: any) {
-      console.error("Error completing lesson:", error);
-      toast.error("Failed to save progress");
+    };
+    void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseId]);
+
+  const handleBack = () => navigate(-1);
+
+  const handleChange = (sectionId: number | string, questionId: number | string, value: string) => {
+    const key = `${sectionId}-${questionId}`;
+    setUserAnswers(prev => ({ ...prev, [key]: value }));
+  };
+
+  // Start/unlock a section (shuffle already done on load)
+  const handleStartSection = (sectionId: number) => {
+    setUnlockedSections(prev => (prev.includes(sectionId) ? prev : [...prev, sectionId]));
+  };
+
+  // Submit answers to practice endpoint then mark lesson complete
+  const handleSubmit = async (section) => {
+    const sectionId = section.sectionId;
+    const lessonId = section.lessonId ?? `listening-section-${sectionId}`; // fallback id if server lacks lesson id
+    const questions = section.questions;
+
+    // Build answers object
+    const answers: Record<string, string> = {};
+    for (const q of questions) {
+      const key = `${sectionId}-${q.id}`;
+      answers[`q${q.id}`] = (userAnswers[key] || "").toString();
     }
+
+    const token = localStorage.getItem("skillquest_token");
+    if (!token) {
+      toast.error("Please login first");
+      navigate("/login");
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      // 1) Submit practice (server accepts JSON answers)
+      const practiceResp = await api.post(`/api/practice/${lessonId}/submit`, {
+        answers,
+      });
+
+      const practiceData = practiceResp?.data;
+      const practiceXp = practiceData?.xpEarned ?? 0;
+      const practiceScore = practiceData?.score ?? 0;
+      const totalXpAfterPractice = practiceData?.totalXp ?? null;
+
+      // 2) Immediately mark lesson complete so backend increments lessonsCompleted and awards XP_PER_LESSON (20)
+      const completeResp = await api.post(`/api/lessons/${lessonId}/complete`, { courseId });
+      const completeData = completeResp?.data;
+      const lessonXp = completeData?.xpAwarded ?? completeData?.xpEarned ?? 0;
+      const totalXpAfterComplete = completeData?.totalXp ?? totalXpAfterPractice;
+
+      // Update localStorage user.xp and level based on returned totalXp if present, else add xp
+      try {
+        const userLocal = JSON.parse(localStorage.getItem("user") || "{}");
+        if (totalXpAfterComplete != null) {
+          userLocal.xp = totalXpAfterComplete;
+        } else {
+          userLocal.xp = (userLocal.xp || 0) + practiceXp + lessonXp;
+        }
+        userLocal.level = Math.max(1, Math.floor((userLocal.xp || 0) / 100) + 1);
+        localStorage.setItem("user", JSON.stringify(userLocal));
+      } catch (e) {
+        console.warn("Could not update local user xp", e);
+      }
+
+      // Build local feedback by comparing text answers where we have correct answers in data
+      const newFeedback: Record<string, "correct" | "wrong"> = {};
+      for (const q of questions) {
+        const key = `${sectionId}-${q.id}`;
+        if (q.answer !== undefined) {
+          const userAns = (userAnswers[key] || "").toString().trim().toLowerCase();
+          const correct = (q.answer || "").toString().trim().toLowerCase();
+          newFeedback[key] = userAns !== "" && userAns === correct ? "correct" : "wrong";
+        } else {
+          // if no correct answer available, mark as wrong/unknown; server scoring is authoritative
+          newFeedback[key] = "wrong";
+        }
+      }
+      setFeedback(prev => ({ ...prev, ...newFeedback }));
+
+      toast.success(`Submitted — score: ${practiceScore} — XP +${(practiceXp || 0) + (lessonXp || 0)}`);
+
+      // unlock next section
+      setUnlockedSections(prev => [...new Set([...prev, sectionId + 1])]);
+
+      // if last section, navigate back to lessons overview
+      const last = sections[sections.length - 1]?.sectionId;
+      if (sectionId === last) {
+        navigate(`/lessons/${courseId}`);
+      }
+    } catch (err: any) {
+      console.error("Listening submit error:", err);
+      if (axios.isAxiosError(err) && err.response?.status === 401) {
+        toast.error("Session expired — please login");
+        navigate("/login");
+        return;
+      }
+      toast.error(err?.response?.data?.error || "Failed to submit answers");
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDone = (section) => {
+    // call submit which handles both practice submit and lesson complete
+    void handleSubmit(section);
   };
 
   return (
     <div className="min-h-screen flex flex-col items-center bg-[hsl(var(--background))] text-[hsl(var(--foreground))] p-6 overflow-y-auto">
-      <div>
-        <Button variant="ghost" onClick={handleBack} className="group border-0">
+      <div className="w-full max-w-2xl">
+        <Button variant="ghost" onClick={handleBack} className="group border-0 mb-4">
           <ArrowLeft className="mr-2 h-4 w-4 group-hover:-translate-x-1 transition-transform" />
           <span className="font-pixel text-[0.65rem]">BACK</span>
         </Button>
-      </div>
-      <h1 className="text-3xl font-pixel mb-8 animate-glow text-center">
-        🎧 Listening Practice
-      </h1>
 
-      <div className="w-full max-w-2xl space-y-12">
-        {listeningData.map((section, sectionIndex) => {
-          const isUnlocked = unlockedSections.includes(section.id);
+        <h1 className="text-3xl font-pixel mb-6 animate-glow text-center">🎧 {courseTitle || "Listening Practice"}</h1>
 
-          return (
-            <div
-              key={section.id}
-              className={`p-6 rounded-2xl shadow-md border transition-all duration-500 ${
-                isUnlocked
-                  ? "bg-white/10 border-gray-400"
-                  : "bg-gray-900/40 border-gray-700 opacity-60 pointer-events-none"
-              }`}
-            >
-              <h2 className="text-2xl font-semibold mb-2">{section.title}</h2>
-              <p className="text-gray-400 mb-4">⏱ Duration: {section.duration}</p>
+        <div className="space-y-8">
+          {sections.map((section) => {
+            const isUnlocked = unlockedSections.includes(section.sectionId);
+            const questions = section.questions;
+            const allAnswered = questions.every(q => {
+              const key = `${section.sectionId}-${q.id}`;
+              return (userAnswers[key] || "").toString().trim() !== "";
+            });
 
-              {isUnlocked ? (
-                <div className="space-y-4">
-                  {section.questions.map((q) => {
-                    const key = `${section.id}-${q.id}`;
-                    return (
-                      <div key={key} className="flex flex-col space-y-1">
-                        <label className="font-bold">{q.question}</label>
-                        <input
-                          type="text"
-                          value={userAnswers[key] || ""}
-                          onChange={(e) =>
-                            handleChange(section.id, q.id, e.target.value)
-                          }
-                          className="p-2 rounded border border-[hsl(var(--border))] bg-white text-black"
-                        />
-                        {feedback[key] && (
-                          <span
-                            className={`font-bold ${
-                              feedback[key] === "correct"
-                                ? "text-green-500"
-                                : "text-red-500"
-                            }`}
-                          >
-                            {feedback[key] === "correct"
-                              ? "Correct ✅"
-                              : `Wrong ❌ (Answer: ${q.answer})`}
-                          </span>
-                        )}
-                      </div>
-                    );
-                  })}
+            return (
+              <div
+                key={section.sectionId}
+                className={`p-6 rounded-2xl shadow-md border transition-all duration-500 ${isUnlocked ? "bg-white/5 border-gray-400" : "bg-gray-900/40 border-gray-700 opacity-60 pointer-events-none"}`}
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <div>
+                    <h2 className="text-2xl font-semibold">{section.title}</h2>
+                    <p className="text-gray-400">⏱ Duration: {section.duration}</p>
+                    {section.lessonId && <p className="text-xs text-muted-foreground mt-1">Lesson ID: {section.lessonId}</p>}
+                  </div>
 
-                  <div className="flex mt-6 space-x-4">
-                    {!section.questions.some(
-                      (q) => feedback[`${section.id}-${q.id}`]
-                    ) && (
-                      <Button
-                        onClick={() => handleSubmit(section.id)}
-                        className="px-6 py-2 rounded-full font-pixel hover:scale-105 transition-all"
-                      >
-                        Submit
-                      </Button>
-                    )}
-
-                    {section.questions.every(
-                      (q) => feedback[`${section.id}-${q.id}`]
-                    ) && (
-                      <Button
-                        onClick={() => handleDone(section.id)}
-                        className="px-6 py-2 rounded-full font-pixel bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] hover:scale-105 transition-all"
-                      >
-                        {section.id === listeningData.length
-                          ? "Finish 🎉"
-                          : "Done →"}
-                      </Button>
+                  <div className="flex items-center gap-2">
+                    {!isUnlocked ? (
+                      <Button onClick={() => handleStartSection(section.sectionId)} className="px-4 py-2">Start</Button>
+                    ) : (
+                      <div className="text-xs font-pixel text-muted-foreground">Unlocked</div>
                     )}
                   </div>
                 </div>
-              ) : (
-                <p className="text-gray-500 italic">
-                  🔒 Complete the previous section to unlock this one.
-                </p>
-              )}
 
-              {sectionIndex !== listeningData.length - 1 && (
-                <hr className="mt-8 border-t border-gray-500 opacity-40" />
-              )}
-            </div>
-          );
-        })}
+                {isUnlocked ? (
+                  <div className="space-y-4 mt-4">
+                    {questions.map((q) => {
+                      const key = `${section.sectionId}-${q.id}`;
+                      return (
+                        <div key={key} className="flex flex-col space-y-1">
+                          <label className="font-bold">{q.question}</label>
+                          <input
+                            type="text"
+                            value={userAnswers[key] || ""}
+                            onChange={(e) => handleChange(section.sectionId, q.id, e.target.value)}
+                            className="p-2 rounded border border-[hsl(var(--border))] bg-white text-black"
+                            disabled={isSubmitting}
+                          />
+                          {feedback[key] && (
+                            <span className={`font-bold ${feedback[key] === "correct" ? "text-green-500" : "text-red-500"}`}>
+                              {feedback[key] === "correct" ? "Correct ✅" : `Wrong ❌${q.answer ? ` (Answer: ${q.answer})` : ""}`}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+
+                    <div className="flex mt-6 space-x-4">
+                      <Button
+                        onClick={() => void handleSubmit(section)}
+                        className="px-6 py-2 rounded-full font-pixel hover:scale-105 transition-all"
+                        disabled={isSubmitting}
+                      >
+                        {isSubmitting ? "Submitting…" : "Submit Answers"}
+                      </Button>
+
+                      <Button
+                        onClick={() => handleDone(section)}
+                        className="px-6 py-2 rounded-full font-pixel bg-[hsl(var(--primary))] text-[hsl(var(--primary-foreground))] hover:scale-105 transition-all"
+                        disabled={isSubmitting || !allAnswered}
+                      >
+                        {isSubmitting ? "Processing…" : section.sectionId === sections[sections.length - 1].sectionId ? "Finish 🎉" : "Done →"}
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="text-gray-500 italic">🔒 Complete the previous section to unlock this one.</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
