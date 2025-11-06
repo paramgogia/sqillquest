@@ -1,0 +1,75 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. All colors MUST be HSL. */
+
+@layer base {
+  :root {
+    /* Retro 8-bit pixel-art color palette */
+    --background: 240 30% 8%;
+    --foreground: 0 0% 95%;
+
+    --card: 240 25% 12%;
+    --card-foreground: 0 0% 95%;
+
+    --popover: 240 25% 12%;
+    --popover-foreground: 0 0% 95%;
+
+    /* Hot pink - pixel magic */
+    --primary: 330 100% 65%;
+    --primary-foreground: 0 0% 100%;
+
+    /* Pixel purple */
+    --secondary: 270 100% 70%;
+    --secondary-foreground: 0 0% 100%;
+
+    --muted: 240 20% 20%;
+    --muted-foreground: 0 0% 60%;
+
+    /* Neon green - retro success */
+    --accent: 150 100% 60%;
+    --accent-foreground: 240 30% 8%;
+
+    /* Pixel orange */
+    --pixel-orange: 30 100% 60%;
+    --pixel-blue: 200 100% 65%;
+
+    --destructive: 0 100% 60%;
+    --destructive-foreground: 0 0% 100%;
+
+    --border: 240 20% 25%;
+    --input: 240 25% 15%;
+    --ring: 330 100% 65%;
+
+    --radius: 0.25rem;
+
+    /* Pixel gradients */
+    --gradient-quest: linear-gradient(135deg, hsl(240 30% 8%), hsl(240 30% 12%));
+    --gradient-magic: linear-gradient(135deg, hsl(330 100% 65%), hsl(270 100% 70%));
+    --gradient-treasure: linear-gradient(135deg, hsl(30 100% 60%), hsl(45 100% 65%));
+    --gradient-success: linear-gradient(135deg, hsl(150 100% 60%), hsl(120 100% 55%));
+    --gradient-pixel: linear-gradient(135deg, hsl(200 100% 65%), hsl(270 100% 70%));
+        
+    /* Pixel shadows and glows */
+    --shadow-card: 0 8px 0 hsl(240 20% 6%), 0 0 20px hsl(330 100% 65% / 0.2);
+    --shadow-quest: 0 8px 0 hsl(240 20% 6%), 0 0 30px hsl(330 100% 65% / 0.3);
+    --glow-primary: 0 0 20px hsl(330 100% 65% / 0.6), 0 0 40px hsl(330 100% 65% / 0.3);
+    --glow-gold: 0 0 20px hsl(30 100% 60% / 0.6), 0 0 40px hsl(30 100% 60% / 0.3);
+    --glow-pixel: 0 0 15px currentColor, 0 0 30px currentColor;
+
+    /* Animations */
+    --transition-smooth: all 0.2s steps(3);
+    --transition-bounce: all 0.3s steps(5);
+  }
+}
+
+@layer base {
+  * {
+    @apply border-[hsl(var(--border))];
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
