@@ -6,13 +6,9 @@ import axios from "axios";
 import { toast } from "sonner";
 
 /**
- * Speaking.tsx
- * - If ?lessonId= is present and the lesson type === 'quiz', render a quiz based on lesson.resources
- * - Quiz resources expected: ["Question 1: ... || Answer: ...", "Question 2: ... || Answer: ..."]
- * - Submits to POST /api/practice/:lessonId/submit  { answers }  -> returns { score, xpEarned, totalXp }
- * - Then marks lesson complete: POST /api/lessons/:lessonId/complete  { courseId }
- *
- * Fallback: original speaking experience (speech recognition)
+ * Speaking.tsx (modified)
+ * - Quiz submit now stays on same page and shows feedback.
+ * - Cancel button navigates -1 (back).
  */
 
 const API_BASE = "http://localhost:4000";
@@ -28,7 +24,7 @@ const speakingData = [
       { id: 2, text: "I enjoy reading books and watching movies on weekends.", difficulty: "easy" },
     ],
   },
-  // ... (keeps your existing fallback sections)
+  // ... keep your other fallback sections if needed
 ];
 
 const Speaking = () => {
@@ -40,13 +36,12 @@ const Speaking = () => {
   // quiz-related state
   const [isQuiz, setIsQuiz] = useState(false);
   const [quizTitle, setQuizTitle] = useState("");
-  const [quizQuestions, setQuizQuestions] = useState<
-    { qid: string; question: string; answer?: string }[]
-  >([]);
+  const [quizQuestions, setQuizQuestions] = useState<{ qid: string; question: string; answer?: string }[]>([]);
   const [quizAnswers, setQuizAnswers] = useState<Record<string, string>>({});
   const [quizSubmitting, setQuizSubmitting] = useState(false);
+  const [quizSubmitted, setQuizSubmitted] = useState(false);
 
-  // original speaking states (fallback)
+  // fallback speaking state
   const [userRecordings, setUserRecordings] = useState<Record<string, string>>({});
   const [feedback, setFeedback] = useState<Record<string, any>>({});
   const [unlockedSections, setUnlockedSections] = useState<number[]>([1]);
@@ -54,15 +49,13 @@ const Speaking = () => {
   const [recognition, setRecognition] = useState<any>(null);
   const [browserSupport, setBrowserSupport] = useState(true);
 
-  // set auth header if token exists
+  // attach token if present
   useEffect(() => {
     const token = localStorage.getItem("skillquest_token");
-    if (token) {
-      api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
-    }
+    if (token) api.defaults.headers.common["Authorization"] = `Bearer ${token}`;
   }, []);
 
-  // attempt to load lesson if lessonId present
+  // load lesson if lessonId provided
   useEffect(() => {
     const loadLesson = async () => {
       if (!lessonIdParam) return;
@@ -71,7 +64,6 @@ const Speaking = () => {
         const lesson = res?.data;
         if (!lesson) return;
 
-        // If lesson.type is quiz, parse resources
         if ((lesson.type || "").toLowerCase() === "quiz") {
           setIsQuiz(true);
           setQuizTitle(lesson.title || "Quiz");
@@ -79,12 +71,10 @@ const Speaking = () => {
           const resources: string[] = Array.isArray(lesson.resources) ? lesson.resources : [];
 
           const parsed = resources.map((r, idx) => {
-            // try splitting by "||" or "||"
             const parts = r.split("||").map((s) => s.trim());
             let qtext = parts[0] || `Question ${idx + 1}`;
             let ans: string | undefined = undefined;
 
-            // attempt to extract "Answer:" token from any part
             for (const part of parts.slice(1)) {
               const lower = part.toLowerCase();
               if (lower.startsWith("answer:")) {
@@ -93,7 +83,6 @@ const Speaking = () => {
               }
             }
 
-            // fallback: try to extract "Answer:" inside the first part as well
             if (!ans) {
               const match = qtext.match(/\|\|\s*answer:\s*(.+)$/i);
               if (match) {
@@ -102,7 +91,6 @@ const Speaking = () => {
               }
             }
 
-            // also trim "Question X:" if present
             qtext = qtext.replace(/^[qQ]uestion\s*\d*\s*[:.-]?\s*/i, "").trim();
 
             return { qid: String(idx + 1), question: qtext, answer: ans };
@@ -110,21 +98,18 @@ const Speaking = () => {
 
           setQuizQuestions(parsed);
         } else {
-          // not a quiz - keep fallback speaking behaviour
           setIsQuiz(false);
         }
       } catch (err) {
         console.error("Could not fetch lesson:", err);
-        // on error just fallback to built-in speakingData
         setIsQuiz(false);
       }
     };
+
     void loadLesson();
   }, [lessonIdParam]);
 
-  // ------------------------
-  // Quiz handlers
-  // ------------------------
+  // QUIZ handlers
   const handleQuizAnswerChange = (qid: string, value: string) => {
     setQuizAnswers((p) => ({ ...p, [qid]: value }));
   };
@@ -141,7 +126,7 @@ const Speaking = () => {
       return;
     }
 
-    // build answers payload using the qid keys
+    // build answers
     const answersPayload: Record<string, string> = {};
     for (const q of quizQuestions) {
       answersPayload[`q${q.qid}`] = (quizAnswers[q.qid] || "").toString();
@@ -149,26 +134,18 @@ const Speaking = () => {
 
     setQuizSubmitting(true);
     try {
-      // 1) Submit practice (answers). Server returns xpEarned, score, totalXp...
-      const practiceResp = await api.post(`/api/practice/${lessonIdParam}/submit`, {
-        answers: answersPayload,
-      });
-
+      const practiceResp = await api.post(`/api/practice/${lessonIdParam}/submit`, { answers: answersPayload });
       const practiceData = practiceResp?.data || {};
       const xpFromPractice = practiceData.xpEarned ?? 0;
       const score = practiceData.score ?? 0;
-      const totalXpAfterPractice = practiceData.totalXp ?? null;
 
-      // 2) Mark lesson complete (award lesson XP) - send courseId if available (skillName used as courseId in your routes)
-      const completeResp = await api.post(`/api/lessons/${lessonIdParam}/complete`, {
-        courseId: skillName || undefined,
-      });
-
+      // mark lesson complete (send courseId if available)
+      const completeResp = await api.post(`/api/lessons/${lessonIdParam}/complete`, { courseId: skillName || undefined });
       const completeData = completeResp?.data || {};
       const xpFromComplete = completeData.xpAwarded ?? completeData.xpEarned ?? 0;
-      const totalXpAfterComplete = completeData.totalXp ?? totalXpAfterPractice;
+      const totalXpAfterComplete = completeData.totalXp ?? practiceData.totalXp ?? null;
 
-      // update localStorage user xp/level if server returned totals
+      // update local user xp if returned
       try {
         const userLocal = JSON.parse(localStorage.getItem("user") || "{}");
         if (totalXpAfterComplete != null) {
@@ -182,7 +159,7 @@ const Speaking = () => {
         console.warn("Could not update local user xp", e);
       }
 
-      // build local feedback by comparing known answers (if resource had answers)
+      // local feedback by comparing known answers (if provided)
       const localFeedback: Record<string, "correct" | "wrong"> = {};
       for (const q of quizQuestions) {
         const correct = (q.answer || "").toString().trim().toLowerCase();
@@ -190,21 +167,16 @@ const Speaking = () => {
         localFeedback[q.qid] = correct && given && given === correct ? "correct" : "wrong";
       }
 
-      // show result
-      setQuizSubmitting(false);
-      toast.success(`Quiz submitted — score:${score} • +${(xpFromPractice || 0) + (xpFromComplete || 0)} XP`);
-      // optionally show a small result view (we'll mark local feedback)
-      // map to feedback shape for rendering
       const fb: Record<string, any> = {};
       for (const [qid, val] of Object.entries(localFeedback)) {
         fb[qid] = { status: val };
       }
       setFeedback(fb);
 
-      // navigate back to lessons overview after a small delay
-      setTimeout(() => {
-        navigate(`/lessons/${skillName}`);
-      }, 900);
+      // show toast and keep user on same page
+      toast.success(`Quiz submitted — score:${score} • +${(xpFromPractice || 0) + (xpFromComplete || 0)} XP`);
+      setQuizSubmitted(true);
+      setQuizSubmitting(false);
     } catch (err: any) {
       console.error("Quiz submit error:", err);
       toast.error(err?.response?.data?.error || "Failed to submit quiz");
@@ -212,11 +184,9 @@ const Speaking = () => {
     }
   };
 
-  // ------------------------
-  // Original speech-recognition setup (fallback)
-  // ------------------------
+  // speech-recognition setup (fallback)
   useEffect(() => {
-    if (isQuiz) return; // do not init speech recognition for quiz mode
+    if (isQuiz) return;
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (SpeechRecognition) {
       try {
@@ -244,40 +214,28 @@ const Speaking = () => {
   const calculateSimilarity = (str1: string, str2: string) => {
     const s1 = str1.toLowerCase().replace(/[^\w\s]/g, "");
     const s2 = str2.toLowerCase().replace(/[^\w\s]/g, "");
-
     const words1 = s1.split(/\s+/);
     const words2 = s2.split(/\s+/);
-
     let matches = 0;
     const maxLength = Math.max(words1.length, words2.length);
-
     words1.forEach((word) => {
-      if (words2.includes(word)) {
-        matches++;
-      }
+      if (words2.includes(word)) matches++;
     });
-
     return (matches / maxLength) * 100;
   };
 
   const handleStartRecording = (sectionId: number, sentenceId: number, targetText: string) => {
     const key = `${sectionId}-${sentenceId}`;
-
     if (!recognition) return;
-
     setIsRecording((p) => ({ ...p, [key]: true }));
-
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
       setUserRecordings((p) => ({ ...p, [key]: transcript }));
-
       const similarity = calculateSimilarity(transcript, targetText);
       const words1 = targetText.toLowerCase().split(/\s+/);
       const words2 = transcript.toLowerCase().split(/\s+/);
-
       const missingWords = words1.filter((word) => !words2.some((w) => w.includes(word) || word.includes(w)));
       const extraWords = words2.filter((word) => !words1.some((w) => w.includes(word) || word.includes(w)));
-
       setFeedback((p) => ({
         ...p,
         [key]: {
@@ -288,19 +246,15 @@ const Speaking = () => {
           extraWords,
         },
       }));
-
       setIsRecording((p) => ({ ...p, [key]: false }));
     };
-
     recognition.onerror = (event: any) => {
       console.error("Speech recognition error:", event.error);
       setIsRecording((p) => ({ ...p, [key]: false }));
     };
-
     recognition.onend = () => {
       setIsRecording((p) => ({ ...p, [key]: false }));
     };
-
     recognition.start();
   };
 
@@ -320,7 +274,6 @@ const Speaking = () => {
     if (sectionId < speakingData.length) {
       setUnlockedSections((prev) => [...new Set([...prev, sectionId + 1])]);
     }
-
     if (sectionId === speakingData.length) {
       const completedSteps = JSON.parse(localStorage.getItem(`${skillName}-completed`) || "[]");
       const newCompleted = [...new Set([...completedSteps, 24])];
@@ -329,24 +282,19 @@ const Speaking = () => {
     }
   };
 
-   const handleBack = () => navigate(-1);
+  // small back helper used by header button
+  const handleBack = () => navigate(-1);
 
-
-  // ------------------------
-  // Render
-  // ------------------------
-  // Back button + title
   return (
     <div className="min-h-screen flex flex-col items-center bg-[hsl(var(--background))] text-[hsl(var(--foreground))] p-6 overflow-y-auto">
       <div>
-        <Button variant="ghost" onClick={() => navigate(-1)} className="group border-0">
+        <Button variant="ghost" onClick={handleBack} className="group border-0">
           <ArrowLeft className="mr-2 h-4 w-4 group-hover:-translate-x-1 transition-transform" />
           <span className="font-pixel text-[0.65rem]">BACK</span>
         </Button>
       </div>
 
       {isQuiz ? (
-        // Quiz UI
         <div className="w-full max-w-3xl">
           <h1 className="text-3xl font-pixel mb-6 animate-glow text-center">🧠 {quizTitle}</h1>
 
@@ -367,7 +315,7 @@ const Speaking = () => {
                     onChange={(e) => handleQuizAnswerChange(q.qid, e.target.value)}
                     placeholder="Type your answer..."
                     className="w-full p-2 rounded border bg-white text-black"
-                    disabled={quizSubmitting}
+                    disabled={quizSubmitting || quizSubmitted}
                   />
 
                   {feedback[q.qid] && (
@@ -377,7 +325,6 @@ const Speaking = () => {
                     </div>
                   )}
 
-                  {/* local compare preview */}
                   {!feedback[q.qid] && q.answer && quizAnswers[q.qid] && (
                     <div className={`mt-2 text-sm ${passed ? "text-green-400" : "text-yellow-300"}`}>{passed ? "Looks correct" : "May be incorrect"}</div>
                   )}
@@ -386,17 +333,27 @@ const Speaking = () => {
             })}
 
             <div className="flex gap-4 mt-4">
-              <Button onClick={() => void submitQuiz()} disabled={quizSubmitting} className="px-6 py-2">
-                {quizSubmitting ? "Submitting..." : "Submit Quiz"}
+              <Button onClick={() => void submitQuiz()} disabled={quizSubmitting || quizSubmitted} className="px-6 py-2">
+                {quizSubmitting ? "Submitting..." : quizSubmitted ? "Submitted ✓" : "Submit Quiz"}
               </Button>
-              <Button variant="outline" onClick={() => navigate(`/lessons/${skillName}`)} disabled={quizSubmitting}>
-                Cancel
+
+              {/* Cancel should navigate back one step now */}
+              <Button variant="outline" onClick={() => navigate(-1)} disabled={quizSubmitting}>
+                Back
               </Button>
             </div>
+
+            {/* small summary after submit */}
+            {quizSubmitted && (
+              <div className="mt-4 p-3 rounded bg-white/5 border border-gray-600">
+                <div className="font-semibold">Result</div>
+                <div className="text-sm text-muted-foreground mt-1">Your answers were submitted. Check each question above for local feedback. The server awarded XP and recorded progress.</div>
+              </div>
+            )}
           </div>
         </div>
       ) : (
-        // Fallback: original speaking UI
+        // fallback speaking UI unchanged
         <div className="w-full max-w-3xl space-y-12">
           <h1 className="text-3xl font-pixel mb-8 animate-glow text-center">🎤 Speaking Practice</h1>
 
@@ -405,12 +362,7 @@ const Speaking = () => {
             const allCompleted = section.sentences.every((s) => feedback[`${section.id}-${s.id}`]?.status === "good");
 
             return (
-              <div
-                key={section.id}
-                className={`p-6 rounded-2xl shadow-md border transition-all duration-500 ${
-                  isUnlocked ? "bg-white/10 border-gray-400" : "bg-gray-900/40 border-gray-700 opacity-60 pointer-events-none"
-                }`}
-              >
+              <div key={section.id} className={`p-6 rounded-2xl shadow-md border transition-all duration-500 ${isUnlocked ? "bg-white/10 border-gray-400" : "bg-gray-900/40 border-gray-700 opacity-60 pointer-events-none"}`}>
                 <h2 className="text-2xl font-semibold mb-2">{section.title}</h2>
                 <p className="text-gray-400 mb-4">⏱ Duration: {section.duration}</p>
 
@@ -443,12 +395,7 @@ const Speaking = () => {
                             <div className="flex gap-2">
                               {!sentenceFeedback || sentenceFeedback.status !== "good" ? (
                                 <>
-                                  <Button
-                                    onClick={() =>
-                                      isRecordingThis ? handleStopRecording(section.id, sentence.id) : handleStartRecording(section.id, sentence.id, sentence.text)
-                                    }
-                                    className={`flex-1 ${isRecordingThis ? "bg-red-500 hover:bg-red-600" : ""}`}
-                                  >
+                                  <Button onClick={() => isRecordingThis ? handleStopRecording(section.id, sentence.id) : handleStartRecording(section.id, sentence.id, sentence.text)} className={`flex-1 ${isRecordingThis ? "bg-red-500 hover:bg-red-600" : ""}`}>
                                     {isRecordingThis ? (
                                       <>
                                         <MicOff className="mr-2 h-4 w-4" />
@@ -461,11 +408,7 @@ const Speaking = () => {
                                       </>
                                     )}
                                   </Button>
-                                  {sentenceFeedback && (
-                                    <Button onClick={() => handleRetry(section.id, sentence.id)} variant="outline">
-                                      Retry
-                                    </Button>
-                                  )}
+                                  {sentenceFeedback && <Button onClick={() => handleRetry(section.id, sentence.id)} variant="outline">Retry</Button>}
                                 </>
                               ) : (
                                 <div className="flex-1 flex items-center justify-center gap-2 text-green-400">
