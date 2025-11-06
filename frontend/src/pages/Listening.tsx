@@ -6,13 +6,10 @@ import { toast } from "sonner";
 import axios from "axios";
 
 /**
- * Listening.tsx
- * - Uses real lesson IDs from GET /api/courses/:courseId when available
- * - Calls:
- *    POST /api/practice/:lessonId/submit  -> { answers }  (returns score, xpEarned, totalXp)
- *    POST /api/lessons/:lessonId/complete -> { courseId } (awards XP_PER_LESSON)
- *
- * Expects JWT at localStorage.skillquest_token
+ * Listening.tsx (modified)
+ * - Adds a single audio player at the top (use asset filename or upload local file)
+ * - Player is placed above sections. You can listen and then answer questions.
+ * - Rest of the component (submit => /api/practice/:lessonId/submit + /api/lessons/:lessonId/complete) unchanged.
  */
 
 // fallback sample questions (used when course doesn't provide question data)
@@ -55,10 +52,8 @@ const listeningDataFallback = [
   },
 ];
 
-// safe client env resolution
-const API_BASE =
-
-  "http://localhost:4000";
+// safe client env resolution (hardcoded to your API)
+const API_BASE = "http://localhost:4000";
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -94,6 +89,11 @@ const Listening = () => {
   const [feedback, setFeedback] = useState<Record<string, "correct" | "wrong">>({});
   const [unlockedSections, setUnlockedSections] = useState<number[]>([1]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Audio player state
+  const [assetFilename, setAssetFilename] = useState<string>(""); // e.g. "listening-course-1.mp3"
+  const [audioUrl, setAudioUrl] = useState<string | null>(null); // resolved URL or object URL for uploaded file
+  const [localFileNameLabel, setLocalFileNameLabel] = useState<string | null>(null);
 
   // set auth header once
   useEffect(() => {
@@ -133,12 +133,8 @@ const Listening = () => {
         // courseData.lessons expected as array (populated)
         const lessons: any[] = Array.isArray(courseData?.lessons) ? courseData.lessons : [];
 
-        // If your lessons include content/questions on server, use them.
-        // Here we attempt to use lesson content if available, otherwise fall back to static questions.
-        const mapped = [];
-
-        // We assume sections count = listeningDataFallback.length.
-        // Map lesson i -> section i (1-based).
+        // Map server lessons (if available) to fallback sections
+        const mapped: any[] = [];
         const fallback = listeningDataFallback;
 
         for (let i = 0; i < fallback.length; i++) {
@@ -146,8 +142,6 @@ const Listening = () => {
           const lesson = lessons[i]; // may be undefined
           let questions = fallback[i].questions.map(q => ({ id: q.id, question: q.question, answer: q.answer }));
           if (lesson && lesson.content) {
-            // If lesson.content contains JSON questions, try to parse.
-            // Accept either a JSON string of { questions: [...] } or plain text.
             try {
               const parsed = typeof lesson.content === "string" ? JSON.parse(lesson.content) : lesson.content;
               if (parsed && Array.isArray(parsed.questions)) {
@@ -158,7 +152,7 @@ const Listening = () => {
                 }));
               }
             } catch (e) {
-              // not JSON — keep fallback questions (server might store media URLs only)
+              // not JSON — keep fallback questions
             }
           }
 
@@ -170,7 +164,7 @@ const Listening = () => {
             title: fallback[i].title,
             duration: fallback[i].duration,
             questions: randomized,
-            lessonId: lesson?._id || lesson?.id, // real lesson id if available
+            lessonId: lesson?._id || lesson?.id,
           });
         }
 
@@ -199,9 +193,63 @@ const Listening = () => {
     setUserAnswers(prev => ({ ...prev, [key]: value }));
   };
 
-  // Start/unlock a section (shuffle already done on load)
+  // Start/unlock a section
   const handleStartSection = (sectionId: number) => {
     setUnlockedSections(prev => (prev.includes(sectionId) ? prev : [...prev, sectionId]));
+  };
+
+  // Play a short demo beep (kept for compatibility) — still available via Play Demo button if you want it
+  const playDemoBeep = async (sectionId: number) => {
+    try {
+      const AudioCtx = (window.AudioContext || (window as any).webkitAudioContext);
+      if (!AudioCtx) {
+        handleStartSection(sectionId);
+        return;
+      }
+      const ctx = new AudioCtx();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = "sine";
+      o.frequency.value = 600;
+      g.gain.value = 0.0001;
+      o.connect(g);
+      g.connect(ctx.destination);
+      const now = ctx.currentTime;
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(0.2, now + 0.02);
+      o.start(now);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 0.45);
+      o.stop(now + 0.45);
+      setTimeout(() => {
+        handleStartSection(sectionId);
+        try { ctx.close(); } catch (e) {}
+      }, 500);
+    } catch (err) {
+      console.warn("Audio play failed, unlocking section anyway.", err);
+      handleStartSection(sectionId);
+    }
+  };
+
+  // Load an audio file from /assets/<filename> (you said you'll upload to assets)
+  const handleLoadAsset = () => {
+    if (!assetFilename) {
+      toast.error("Enter the asset filename (e.g. listening-course-1.mp3)");
+      return;
+    }
+    // Build URL assuming assets served from /assets/
+    const url = `/assets/${assetFilename}`;
+    setAudioUrl(url);
+    setLocalFileNameLabel(null);
+    toast.success("Loaded asset audio (check player above).");
+  };
+
+  // Upload a local file and play locally (object URL)
+  const handleLocalFile = (file: File | null) => {
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setAudioUrl(url);
+    setLocalFileNameLabel(file.name);
+    toast.success(`Loaded local file: ${file.name}`);
   };
 
   // Submit answers to practice endpoint then mark lesson complete
@@ -307,7 +355,50 @@ const Listening = () => {
           <span className="font-pixel text-[0.65rem]">BACK</span>
         </Button>
 
-        <h1 className="text-3xl font-pixel mb-6 animate-glow text-center">🎧 {courseTitle || "Listening Practice"}</h1>
+        <h1 className="text-3xl font-pixel mb-4 animate-glow text-center">🎧 {courseTitle || "Listening Practice"}</h1>
+
+        {/* AUDIO PLAYER + ASSET LOADER */}
+        <div className="mb-6 p-4 rounded-xl border bg-white/5 border-gray-400">
+          <div className="flex items-center justify-between gap-4 mb-3">
+            <div className="flex-1">
+              <label className="block text-sm text-muted-foreground mb-1">Audio (use asset or upload local)</label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  placeholder="e.g. listening-course-1.mp3"
+                  value={assetFilename}
+                  onChange={(e) => setAssetFilename(e.target.value)}
+                  className="flex-1 p-2 rounded border border-[hsl(var(--border))] bg-white text-black"
+                />
+                <Button onClick={handleLoadAsset} className="px-4 py-2">Load Asset</Button>
+              </div>
+              <div className="mt-2 text-xs text-muted-foreground">
+                Place the file in <code>/assets/</code> and enter its filename above, or upload a local file below.
+              </div>
+            </div>
+
+            <div className="w-48">
+              <label className="block text-sm text-muted-foreground mb-1">Upload local audio</label>
+              <input
+                type="file"
+                accept="audio/*"
+                onChange={(e) => {
+                  const f = e.target.files?.[0] ?? null;
+                  handleLocalFile(f);
+                }}
+                className="w-full"
+              />
+              {localFileNameLabel && <div className="text-xs mt-1 text-muted-foreground">{localFileNameLabel}</div>}
+            </div>
+          </div>
+
+          {/* audio player (if audioUrl available) */}
+          {audioUrl ? (
+            <audio src={audioUrl} controls className="w-full mt-3" />
+          ) : (
+            <div className="text-sm text-muted-foreground">No audio loaded — load an asset or upload a file to play.</div>
+          )}
+        </div>
 
         <div className="space-y-8">
           {sections.map((section) => {
@@ -332,7 +423,10 @@ const Listening = () => {
 
                   <div className="flex items-center gap-2">
                     {!isUnlocked ? (
-                      <Button onClick={() => handleStartSection(section.sectionId)} className="px-4 py-2">Start</Button>
+                      <>
+                        <Button onClick={() => handleStartSection(section.sectionId)} className="px-4 py-2">Start</Button>
+                        <Button onClick={() => playDemoBeep(section.sectionId)} className="px-4 py-2">Play Demo</Button>
+                      </>
                     ) : (
                       <div className="text-xs font-pixel text-muted-foreground">Unlocked</div>
                     )}

@@ -54,7 +54,7 @@ const User = mongoose.model('User', UserSchema);
 const LessonSchema = new Schema({
   title: String,
   content: String, // could be text or markup or an S3 URL for resource
-  type: { type: String, enum: ['listening','reading','video','quiz','text'], default: 'text' },
+  type: { type: String, enum: ['listening','reading','video','quiz','writing','text'], default: 'text' },
   durationMinutes: Number,
   order: Number,
   resources: [String], // URLs or resource identifiers
@@ -419,8 +419,8 @@ app.get('/api/badges', authenticateToken, async (req, res) => {
 // For simplicity these are unprotected in this single-file example,
 // in production require admin auth or env key.
 app.post('/api/admin/lesson', async (req, res) => {
-  const { title, content, type, durationMinutes, order } = req.body;
-  const lesson = new Lesson({ title, content, type, durationMinutes, order });
+  const { title, content, type, durationMinutes, order, resources } = req.body;
+  const lesson = new Lesson({ title, content, type, durationMinutes, order, resources });
   await lesson.save();
   res.json(lesson);
 });

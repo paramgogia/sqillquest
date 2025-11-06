@@ -8,13 +8,7 @@ import { Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import axios from "axios";
 
-
-
-const API_BASE =
-
- 
-  // fallback
-  "http://localhost:4000";
+const API_BASE = "http://localhost:4000";
 
 const api = axios.create({
   baseURL: API_BASE,
@@ -23,19 +17,29 @@ const api = axios.create({
 
 const Login = () => {
   const navigate = useNavigate();
+
+  // Login state
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+
+  // Signup overlay state
+  const [showSignup, setShowSignup] = useState(false);
+  const [signupName, setSignupName] = useState("");
+  const [signupEmail, setSignupEmail] = useState("");
+  const [signupPassword, setSignupPassword] = useState("");
+  const [signupEducation, setSignupEducation] = useState("undergraduate");
+  const [signupLoading, setSignupLoading] = useState(false);
 
   const saveToken = (token: string) => {
     try {
       localStorage.setItem("skillquest_token", token);
     } catch (err) {
-      // If localStorage is blocked, just ignore but show user a message
       console.warn("Could not save token to localStorage", err);
     }
   };
 
+  // LOGIN
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email || !password) {
@@ -47,18 +51,14 @@ const Login = () => {
     try {
       const payload = { email, password };
       const res = await api.post("/api/auth/login", payload);
-      // expected: { token, user: {...} }
       if (res?.data?.token) {
         saveToken(res.data.token);
         toast.success(`Welcome back, ${email.split("@")[0] || "Adventurer"}!`);
-        // navigate to education page after successful login
         navigate("/education");
       } else {
-        // unexpected response shape
         toast.error("Login succeeded but token missing from response.");
       }
     } catch (err: any) {
-      // axios error handling
       if (err?.response?.data?.error) {
         toast.error(err.response.data.error);
       } else if (err?.response?.status === 401) {
@@ -72,23 +72,51 @@ const Login = () => {
     }
   };
 
-  const handleSignUp = async () => {
-    if (!email || !password) {
-      toast.error("Please fill in all fields");
+  // OPEN SIGNUP CARD (overlay)
+  const openSignup = () => {
+    // prefill signup email/password from login inputs for convenience
+    setSignupEmail(email || "");
+    setSignupPassword(password || "");
+    setSignupName((email && email.split("@")[0]) || "");
+    setShowSignup(true);
+  };
+
+  // CANCEL SIGNUP
+  const cancelSignup = () => {
+    setShowSignup(false);
+    setSignupLoading(false);
+  };
+
+  // SIGNUP
+  const handleSignUpSubmit = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+
+    if (!signupName || !signupEmail || !signupPassword || !signupEducation) {
+      toast.error("Please fill in all signup fields");
       return;
     }
 
-    setIsLoading(true);
+    setSignupLoading(true);
     try {
-      const payload = { name: email.split("@")[0] || "Adventurer", email, password, educationLevel: "undergraduate" };
+      const payload = {
+        name: signupName,
+        email: signupEmail,
+        password: signupPassword,
+        educationLevel: signupEducation,
+      };
+
       const res = await api.post("/api/auth/register", payload);
-      // expected: { token, user: {...} }
+
       if (res?.data?.token) {
         saveToken(res.data.token);
         toast.success("Account created successfully!");
+        setShowSignup(false);
+        // small delay so toast is visible, then navigate
         navigate("/education");
       } else {
-        toast.success("Account created - please login.");
+        // server may return user without token
+        toast.success("Account created — please login.");
+        setShowSignup(false);
         navigate("/education");
       }
     } catch (err: any) {
@@ -99,7 +127,7 @@ const Login = () => {
       }
       console.error("SignUp error:", err);
     } finally {
-      setIsLoading(false);
+      setSignupLoading(false);
     }
   };
 
@@ -162,7 +190,7 @@ const Login = () => {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="transition-all focus:border-primary"
-                  disabled={isLoading}
+                  disabled={isLoading || signupLoading}
                 />
               </div>
               <div className="space-y-2">
@@ -174,7 +202,7 @@ const Login = () => {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="transition-all focus:border-primary"
-                  disabled={isLoading}
+                  disabled={isLoading || signupLoading}
                 />
               </div>
               <div className="space-y-3 pt-2">
@@ -183,7 +211,7 @@ const Login = () => {
                   variant="quest" 
                   size="lg" 
                   className="w-full"
-                  disabled={isLoading}
+                  disabled={isLoading || signupLoading}
                 >
                   {isLoading ? "Loading..." : "Login"}
                 </Button>
@@ -192,8 +220,8 @@ const Login = () => {
                   variant="outline"
                   size="lg"
                   className="w-full"
-                  onClick={handleSignUp}
-                  disabled={isLoading}
+                  onClick={openSignup}
+                  disabled={isLoading || signupLoading}
                 >
                   Sign Up
                 </Button>
@@ -202,6 +230,90 @@ const Login = () => {
           </CardContent>
         </Card>
       </div>
+
+      {/* Signup overlay card */}
+      {showSignup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <Card className="w-full max-w-lg p-0 relative">
+            <div className="absolute top-3 right-3">
+              <Button variant="ghost" onClick={cancelSignup} className="text-sm">Close</Button>
+            </div>
+            <CardHeader className="p-6">
+              <CardTitle className="text-lg font-pixel">Create your account</CardTitle>
+              <CardDescription className="text-sm">Fill the details below to start your learning quest</CardDescription>
+            </CardHeader>
+
+            <CardContent className="p-6 pt-0">
+              <form onSubmit={(e) => { e.preventDefault(); void handleSignUpSubmit(); }} className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="signup-name">Name</Label>
+                  <Input
+                    id="signup-name"
+                    value={signupName}
+                    onChange={(e) => setSignupName(e.target.value)}
+                    placeholder="Test User"
+                    disabled={signupLoading}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="signup-email">Email</Label>
+                  <Input
+                    id="signup-email"
+                    type="email"
+                    value={signupEmail}
+                    onChange={(e) => setSignupEmail(e.target.value)}
+                    placeholder="test@example.com"
+                    disabled={signupLoading}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="signup-password">Password</Label>
+                  <Input
+                    id="signup-password"
+                    type="password"
+                    value={signupPassword}
+                    onChange={(e) => setSignupPassword(e.target.value)}
+                    placeholder="Password123"
+                    disabled={signupLoading}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="signup-education">Education Level</Label>
+                  <select
+                    id="signup-education"
+                    value={signupEducation}
+                    onChange={(e) => setSignupEducation(e.target.value)}
+                    className="w-full p-2 rounded border border-[hsl(var(--border))] bg-white text-black"
+                    disabled={signupLoading}
+                  >
+                    <option value="12th">12th</option>
+                    <option value="undergraduate">Undergraduate</option>
+                    <option value="postgraduate">Postgraduate</option>
+                  </select>
+                </div>
+
+                <div className="flex gap-3 pt-2">
+                  <Button
+                    type="submit"
+                    className="flex-1"
+                    disabled={signupLoading}
+                    onClick={() => void handleSignUpSubmit()}
+                  >
+                    {signupLoading ? "Creating..." : "Create Account"}
+                  </Button>
+
+                  <Button variant="outline" className="flex-1" onClick={cancelSignup} disabled={signupLoading}>
+                    Cancel
+                  </Button>
+                </div>
+              </form>
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 };
