@@ -12,7 +12,7 @@ import axios from "axios";
 
 const API_BASE =
 
-  process.env.BASE_URL ||
+ 
   // fallback
   "http://localhost:4000";
 

@@ -28,14 +28,16 @@ const App = () => (
           <Route path="/login" element={<Login />} />
           <Route path="/education" element={<Education />} />
           <Route path="/skills" element={<Skills />} />
-          <Route path="/skills/:skillName/start" element={<SkillSelected />} />
-          <Route path="/skills/:skillName" element={<SkillSelected />} />
-          <Route path="/lessons/:skillName" element={<Lessons />} />
-          <Route path="/lessons/:skillName/introduction" element={<Introduction />} />
-          <Route path="/lessons/:skillName/listening" element={<Listening />} />
-          <Route path="/lessons/:skillName/reading" element={<Reading />} />
-          <Route path="/lessons/:skillName/writing" element={<Writing />} />
-          <Route path="/lessons/:skillName/speaking" element={<Speaking />} />
+          {/* When user clicks a course, we navigate to /lessons/:courseId */}
+          <Route path="/lessons/:courseId" element={<Lessons />} />
+          <Route
+            path="/lessons/:courseId/introduction"
+            element={<Introduction />}
+          />
+          <Route path="/lessons/:courseId/listening" element={<Listening />} />
+          <Route path="/lessons/:courseId/reading" element={<Reading />} />
+          <Route path="/lessons/:courseId/writing" element={<Writing />} />
+          <Route path="/lessons/:courseId/speaking" element={<Speaking />} />
           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
           <Route path="*" element={<NotFound />} />
         </Routes>
